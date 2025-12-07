@@ -7,11 +7,13 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from sqlalchemy import create_engine, Column, Integer, Float, String, Date, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+# Database setup
 engine = create_engine("sqlite:///budgetwise.db", echo=False)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 
+# Database models
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True)
@@ -33,10 +35,14 @@ Base.metadata.create_all(bind=engine)
 
 
 class BudgetWiseApp:
+    """Main application for personal budget tracking with visualizations."""
+    
     def __init__(self, master):
         self.master = master
         self.master.title("BudgetWise — Midnight Finance Edition")
-        self.master.geometry("1450x880")
+        self.master.geometry("1550x880")
+        
+        # Theme colors
         self.bg = "#0D1117"
         self.card = "#161B22"
         self.card2 = "#1D242D"
@@ -55,6 +61,7 @@ class BudgetWiseApp:
         self.refresh_dashboard()
 
     def load_transactions_df(self):
+        """Load all transactions from database into a DataFrame."""
         s = SessionLocal()
         rows = s.query(Transaction).all()
         s.close()
@@ -73,6 +80,7 @@ class BudgetWiseApp:
                 for r in rows
             ]
         )
+        
         return df
 
     def load_settings(self):
@@ -187,8 +195,13 @@ class BudgetWiseApp:
             self.tree.heading(col, text=col.capitalize())
 
         self.tree.pack(fill=tk.BOTH, expand=True)
-        ttk.Button(table_card, text="Delete Selected", style="Accent.TButton",
-                   command=self.delete_selected).pack(pady=10)
+        
+        btn_frame = ttk.Frame(table_card, style="Card.TFrame")
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Edit Selected", style="Accent.TButton",
+                   command=self.edit_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Delete Selected", style="Accent.TButton",
+                   command=self.delete_selected).pack(side=tk.LEFT, padx=5)
 
         chart_card = ttk.Frame(body, style="Card.TFrame", padding=14)
         chart_card.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -288,6 +301,7 @@ class BudgetWiseApp:
         messagebox.showinfo("Saved", "Goal updated.")
 
     def refresh_dashboard(self):
+        """Update summary stats, table, and charts for current month."""
         if self.transactions_df.empty:
             month_df = pd.DataFrame(columns=self.transactions_df.columns)
         else:
@@ -330,12 +344,14 @@ class BudgetWiseApp:
         self.draw_chart()
 
     def draw_chart(self):
+        """Render category breakdown or income vs expenses chart."""
         df = self.transactions_df
         now = datetime.now()
-        df = df[
-            (df["date"].dt.year == now.year)
-            & (df["date"].dt.month == now.month)
-        ]
+        if not df.empty:
+            df = df[
+                (df["date"].dt.year == now.year)
+                & (df["date"].dt.month == now.month)
+            ]
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.set_facecolor(self.card)
@@ -375,6 +391,111 @@ class BudgetWiseApp:
             messagebox.showinfo("Deleted", "Transaction removed.")
         else:
             messagebox.showerror("Error", "Could not delete.")
+
+    def edit_selected(self):
+        """Open dialog to edit the selected transaction."""
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showerror("Error", "Select a row to edit.")
+            return
+        
+        values = self.tree.item(sel[0])["values"]
+        tx_id = values[0]
+        
+        # Create edit dialog
+        dialog = tk.Toplevel(self.master)
+        dialog.title("Edit Transaction")
+        dialog.geometry("400x350")
+        dialog.configure(bg=self.card)
+        dialog.transient(self.master)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.master.winfo_x() + (self.master.winfo_width() // 2) - (400 // 2)
+        y = self.master.winfo_y() + (self.master.winfo_height() // 2) - (350 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Form fields
+        labels = ["Date (YYYY-MM-DD)", "Type", "Category", "Description", "Amount"]
+        for i, text in enumerate(labels):
+            ttk.Label(dialog, text=text, foreground=self.gold, background=self.card,
+                      font=("Inter", 11, "bold")).grid(row=i, column=0, pady=10, padx=20, sticky="w")
+        
+        # Date entry
+        edit_date = ttk.Entry(dialog, width=25)
+        edit_date.grid(row=0, column=1, pady=10, padx=10)
+        edit_date.insert(0, values[1])  # date from treeview
+        
+        # Type combobox
+        edit_type_var = tk.StringVar(value=values[2])
+        edit_type = ttk.Combobox(dialog, textvariable=edit_type_var,
+                                 values=["Income", "Expense"], state="readonly", width=22)
+        edit_type.grid(row=1, column=1, pady=10, padx=10)
+        
+        # Category combobox
+        edit_cat_var = tk.StringVar(value=values[3])
+        edit_cat = ttk.Combobox(dialog, textvariable=edit_cat_var,
+                                values=["Salary", "Scholarship", "Food", "Rent",
+                                        "Utilities", "Transport", "Entertainment",
+                                        "Savings", "Other"], state="readonly", width=22)
+        edit_cat.grid(row=2, column=1, pady=10, padx=10)
+        
+        # Description entry
+        edit_desc = ttk.Entry(dialog, width=25)
+        edit_desc.grid(row=3, column=1, pady=10, padx=10)
+        edit_desc.insert(0, values[4] if values[4] else "")
+        
+        # Amount entry (strip $ and commas from displayed value)
+        edit_amount = ttk.Entry(dialog, width=25)
+        edit_amount.grid(row=4, column=1, pady=10, padx=10)
+        amount_str = str(values[5]).replace("$", "").replace(",", "")
+        edit_amount.insert(0, amount_str)
+        
+        def save_changes():
+            # Validate date
+            try:
+                date_val = datetime.strptime(edit_date.get().strip(), "%Y-%m-%d")
+            except:
+                messagebox.showerror("Invalid Date", "Please use YYYY-MM-DD.", parent=dialog)
+                return
+            
+            # Validate amount
+            try:
+                amt = float(edit_amount.get().strip())
+            except:
+                messagebox.showerror("Invalid Amount", "Enter a valid number.", parent=dialog)
+                return
+            
+            # Update database
+            s = SessionLocal()
+            tx = s.query(Transaction).filter(Transaction.id == tx_id).first()
+            if tx:
+                tx.date = date_val
+                tx.type = edit_type_var.get()
+                tx.category = edit_cat_var.get()
+                tx.description = edit_desc.get().strip()
+                tx.amount = amt
+                s.commit()
+                s.close()
+                
+                # Refresh everything
+                self.transactions_df = self.load_transactions_df()
+                self.refresh_dashboard()
+                dialog.destroy()
+                messagebox.showinfo("Success", "Transaction updated.")
+            else:
+                s.close()
+                messagebox.showerror("Error", "Transaction not found.", parent=dialog)
+        
+        # Buttons
+        btn_frame = ttk.Frame(dialog, style="Card.TFrame")
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(btn_frame, text="Save Changes", style="Accent.TButton",
+                   command=save_changes).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Cancel", style="Accent.TButton",
+                   command=dialog.destroy).pack(side=tk.LEFT, padx=10)
 
 
 def main():
